@@ -3,7 +3,7 @@
 #include <Arduino.h>
 
 // ======================== 调试开关 ========================
-#define DEBUG_SERIAL 0
+#define DEBUG_SERIAL 1
 #if DEBUG_SERIAL
 #define DBG_BEGIN(baud) Serial.begin(baud)
 #define DBG_PRINT(x) Serial.print(x)
@@ -29,13 +29,13 @@
 #define RPLIDAR_MOTOR  3
 
 // ======================== 运动控制参数 ========================
-#define SPEED_STRAIGHT     25
+#define SPEED_STRAIGHT     23
 #define SPEED_TURN         15
 #define SPEED_TURNAROUND   15
 
 // ======================== 转弯控制参数 ========================
 #define TURN_MIN_DURATION   600   // 转弯最小时长 (ms)
-#define TURN_MAX_DURATION   900  // 转弯安全超时 (ms)
+#define TURN_MAX_DURATION   750  // 转弯安全超时 (ms)
 #define TURN_FRONT_BLOCKED  20    // 前方受阻阈值 (cm)，车头还对着墙
 
 // ======================== 雷达距离阈值 (单位: cm) ========================
@@ -117,6 +117,7 @@ int stuckRecoverStep = 0;
 float prevFrontDist = 0.0f;
 bool photoFlag = false;
 unsigned long lastTurnExitTime = 0;
+unsigned long lastTurnAroundExitTime = 0;
 bool turnAroundFlag = false;
 unsigned long turnAroundStartTime = 0;
 bool frontBlocked = false;
@@ -245,13 +246,13 @@ void sendStatusToPi(float frontDist, bool flag) {
 // ======================== 直线居中控制 ========================
 void doStraight() {
   float linear = SPEED_STRAIGHT;
-  if (turnAroundFlag && (millis() - lastTurnExitTime) > 2000)
+  if (turnAroundFlag && (millis() - lastTurnExitTime) > 1600)
   {
     turnAroundFlag = false;
     robotState = STATE_TURN_AROUND;
     turnAroundStartTime = millis();
   }
-  else if(stopFlag && (millis() - lastTurnExitTime) > 1800)
+  else if(stopFlag && (millis() - lastTurnExitTime) > 1500)
   {
     stopFlag = false;
     robotState = STATE_FINISH;
@@ -264,10 +265,10 @@ void doStraight() {
   }
   float angular = flfrerror * 0.1;
   angular = constrain(angular, -5, 5);
-  float lateral = -lrerror * 0.25;
+  float lateral = -lrerror * 0.2;
   lateral = constrain(lateral, -20.0f, 20.0f);
   if (frontDistDel0 < 60) {
-    linear = SPEED_STRAIGHT * (frontDistDel0 / 80.0);
+    linear = SPEED_STRAIGHT * (frontDistDel0 / 90.0);
     linear = constrain(linear, 0, SPEED_STRAIGHT);
   } 
   setSpeed(linear, lateral, angular);
@@ -317,7 +318,6 @@ void exitTurn() {
       circle = 2;
       turnCount = 0;
       turnAroundFlag = true;
-      DBG_PRINTLN(turnAroundFlag);
     } else {
       stopFlag = true;
     }
@@ -331,8 +331,9 @@ void doTurnAround() {
   if (!frontBlocked && frontDistDel0 < FRONT_OBSTACLE_TH) {
     frontBlocked = true;
   }
-  if (frontBlocked && frontDistDel0 > FRONT_OPEN_TH || millis() - turnAroundStartTime > 2000) {
+  if (frontBlocked && frontDistDel0 > FRONT_OPEN_TH || millis() - turnAroundStartTime > 1600) {
     frontBlocked = false;
+    lastTurnAroundExitTime = millis();
     stopCar();
     delay(100);
     robotState = STATE_STRAIGHT;
@@ -348,7 +349,7 @@ void handleIntersection() {
   }
   else {photoFlag = false;}
   // 刚转完弯，2500ms 内不处理新路口
-  if ((millis() - lastTurnExitTime) < 2500) {
+  if ((millis() - lastTurnExitTime) < 2500 || (millis() - lastTurnAroundExitTime) < 750) {
     turnConditionMet = false; 
     setSpeed(SPEED_STRAIGHT, 0, 0);
     return;
@@ -410,7 +411,7 @@ void handleIntersection() {
 // ======================== 卡死检测与恢复 ========================
 bool isStuck() {
   float delta = fabs(prevFrontDist - frontDist);
-  if (delta > STUCK_DELTA_TH || frontDist > 20) {
+  if (delta > STUCK_DELTA_TH /*|| frontDist > 20*/) {
     stuckStartTime = millis();
   } 
   prevFrontDist = frontDist;
@@ -477,7 +478,6 @@ void setup() {
 
 void loop() {
   updateRadarData();
-  sendStatusToPi(frontDist, true);
   switch (robotState) {
     case STATE_STRAIGHT:
       if (isStuck()) {
