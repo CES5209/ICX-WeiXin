@@ -35,12 +35,12 @@
 
 // ======================== 转弯控制参数 ========================
 #define TURN_MIN_DURATION   600   // 转弯最小时长 (ms)
-#define TURN_MAX_DURATION   750  // 转弯安全超时 (ms)
+#define TURN_MAX_DURATION   850  // 转弯安全超时 (ms)
 #define TURN_FRONT_BLOCKED  20    // 前方受阻阈值 (cm)，车头还对着墙
 
 // ======================== 雷达距离阈值 (单位: cm) ========================
 #define FRONT_OBSTACLE_TH  30    // 前方有障碍物阈值
-#define FRONT_OPEN_TH      90    // 前方空旷阈值
+#define FRONT_OPEN_TH      80    // 前方空旷阈值
 #define SIDE_WALL_TH       20    // 侧向贴墙阈值
 #define OPEN_AREA_TH       50    // 转向侧开阔区域阈值
 #define SIDE_DIFF_TH       60    // T字路口左右距离差阈值（绝对值）
@@ -259,18 +259,20 @@ void doStraight() {
   }
   lrerror = leftDist - rightDist;
   flfrerror = leftFrontDist - rightFrontDist;
-  if (frontDistDel0 <= 60 || abs(lrerror) > 60){
+  if (frontDistDel0 <= 60 || abs(lrerror) > 40 ){
     lrerror = 0;
     flfrerror = 0;
   }
   float angular = flfrerror * 0.1;
   angular = constrain(angular, -5, 5);
-  float lateral = -lrerror * 0.2;
+  float lateral = -lrerror * 0.15;
   lateral = constrain(lateral, -20.0f, 20.0f);
-  if (frontDistDel0 < 60) {
+  if (frontDistDel0 < 60 ) {
     linear = SPEED_STRAIGHT * (frontDistDel0 / 90.0);
-    linear = constrain(linear, 0, SPEED_STRAIGHT);
   } 
+  else if ((millis() - lastTurnExitTime) > 2500 && abs(lrerror) > 60 ) {
+    linear = SPEED_STRAIGHT * 0.8;
+  }
   setSpeed(linear, lateral, angular);
 }
 
@@ -323,7 +325,7 @@ void exitTurn() {
     }
   }
   robotState = STATE_STRAIGHT;
-  delay(200);
+  //delay(100);
 }
 
 void doTurnAround() {
@@ -331,11 +333,11 @@ void doTurnAround() {
   if (!frontBlocked && frontDistDel0 < FRONT_OBSTACLE_TH) {
     frontBlocked = true;
   }
-  if (frontBlocked && frontDistDel0 > FRONT_OPEN_TH || millis() - turnAroundStartTime > 1600) {
+  if (frontBlocked && frontDistDel0 > FRONT_OPEN_TH || millis() - turnAroundStartTime > 1700) {
     frontBlocked = false;
     lastTurnAroundExitTime = millis();
     stopCar();
-    delay(100);
+    //delay(100);
     robotState = STATE_STRAIGHT;
   }
 }
@@ -348,8 +350,8 @@ void handleIntersection() {
     }
   }
   else {photoFlag = false;}
-  // 刚转完弯，2500ms 内不处理新路口
-  if ((millis() - lastTurnExitTime) < 2500 || (millis() - lastTurnAroundExitTime) < 750) {
+  // 刚转完弯，2000ms 内不处理新路口
+  if ((millis() - lastTurnExitTime) < 2000 || (millis() - lastTurnAroundExitTime) < 750) {
     turnConditionMet = false; 
     setSpeed(SPEED_STRAIGHT, 0, 0);
     return;
@@ -394,8 +396,8 @@ void handleIntersection() {
       turnConditionMet = true;
       turnConditionStartTime = millis();
     } else {
-      // 已经计时，检查是否满 0.15 秒
-      if (millis() - turnConditionStartTime >= 150) {
+      // 已经计时，检查是否满 0.18 秒
+      if (millis() - turnConditionStartTime >= 180) {
         // 执行转弯
         enterTurn(target);
         DBG_PRINTLN("turn enter");
@@ -411,7 +413,7 @@ void handleIntersection() {
 // ======================== 卡死检测与恢复 ========================
 bool isStuck() {
   float delta = fabs(prevFrontDist - frontDist);
-  if (delta > STUCK_DELTA_TH /*|| frontDist > 20*/) {
+  if (delta > STUCK_DELTA_TH || frontDist > 50) {
     stuckStartTime = millis();
   } 
   prevFrontDist = frontDist;
@@ -420,7 +422,7 @@ bool isStuck() {
 
 void doStuckRecover(){
   //先倒退一小段距离
-  if (stuckRecoverStep == 1 && millis() - reverseStartTime <= 500)
+  if (stuckRecoverStep == 1 && millis() - reverseStartTime <= 400)
   {
     setSpeed(-20, 0, 0);
   }
@@ -429,16 +431,15 @@ void doStuckRecover(){
     stuckRecoverStep = 2;
   }
   //小幅度修正车头
-  if(stuckRecoverStep == 2 && millis() - adjustStartTime <= 500)
+  if(stuckRecoverStep == 2 && millis() - adjustStartTime <= 800)
   {
     float adjustErr = leftFrontDist - rightFrontDist;
-    adjustErr = constrain(adjustErr * 0.1, -15, 15);
+    adjustErr = constrain(adjustErr * 0.05, -15, 15);
     setSpeed(18, 0, adjustErr);
   }
   else if(stuckRecoverStep == 2){
     stuckRecoverStep = 0;
     robotState = STATE_STRAIGHT;
-    lastTurnExitTime = millis();
   }
 }
 
